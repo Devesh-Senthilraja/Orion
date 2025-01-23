@@ -1,4 +1,4 @@
-# Curious Project
+# Network Traffic Analysis Based Anomaly Detection
 
 ## Setup
 1. Create a virtual environment:
