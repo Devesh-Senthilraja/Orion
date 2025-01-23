@@ -7,7 +7,9 @@
    source venv/bin/activate  # Windows: venv\Scripts\activate
 
 2. Install dependencies:
+   ```bash
    pip install -r requirements.txt
 
 3. Run the code:
+   ```bash
    python main.py
