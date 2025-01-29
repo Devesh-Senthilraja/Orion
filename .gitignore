@@ -3,3 +3,4 @@ Old/
 Cached_Models/
 Results/
 processed_dataset.csv
+__pycache__/

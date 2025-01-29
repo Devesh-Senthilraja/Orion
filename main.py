@@ -4,9 +4,9 @@ import hashlib
 import time
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
-from sklearn.decomposition import PCA
+import seaborn as sns
+import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.neural_network import MLPClassifier
@@ -19,6 +19,7 @@ statistical_features = ['Tot Fwd Pkts', 'TotLen Fwd Pkts', 'Flow IAT Mean', 'Fwd
 behavioral_features = ['SYN Flag Cnt', 'ACK Flag Cnt', 'Fwd Pkts/s', 'Bwd Pkts/s', 'RST Flag Cnt', 'Active Mean', 'Idle Mean', 'Down/Up Ratio']
 
 data = pd.read_csv("processed_dataset.csv")
+data.reset_index(inplace=True)  # Ensure index is usable
 csv_name = "processed_dataset.csv"
 
 X_general = data[general_features]
@@ -65,7 +66,6 @@ sub_model_predictions_test = {}
 sub_model_metrics = {}
 
 use_grid_search = False
-display_data = False
 
 # Methods
 def verbose_log(message, level="INFO"):
@@ -90,39 +90,77 @@ def calculate_rates(confusion_matrix):
 
     return {"TPR": TPR, "FPR": FPR}
 
-def visualize_model_classification(model, X, y, feature_names=None, use_pca=True, title="Model Classification"):
-    if isinstance(X, np.ndarray):
-        X = pd.DataFrame(X)
+def plot_confusion_matrix(cm, model_name):
+    fig, ax = plt.subplots(figsize=(6, 5))
+    
+    # Use seaborn to create a heatmap
+    sns.heatmap(cm, annot=True, fmt="d", cmap="viridis", linewidths=0.5, linecolor="black", cbar=True)
 
-    if use_pca and X.shape[1] > 2:
-        pca = PCA(n_components=2)
-        X_reduced = pca.fit_transform(X)
-        x1, x2 = X_reduced[:, 0], X_reduced[:, 1]
-        xlabel, ylabel = "PCA Component 1", "PCA Component 2"
-    elif X.shape[1] > 1:
-        x1, x2 = X.iloc[:, 0], X.iloc[:, 1]
-        xlabel, ylabel = feature_names[0] if feature_names else "Feature 1", feature_names[1] if feature_names else "Feature 2"
-    else:
-        raise ValueError("X must have at least 2 features or enable PCA for dimensionality reduction.")
+    # Labels and title
+    ax.set_xlabel("Predicted label")
+    ax.set_ylabel("True label")
+    ax.set_title(f"{model_name} - Confusion Matrix")
 
-    y_pred = model.predict(X)
+    # Save the plot
+    plt.savefig(f"Results/{model_name}_confusion_matrix.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
-    plt.figure(figsize=(10, 7))
-    plt.scatter(x1, x2, c=y_pred, cmap="coolwarm", alpha=0.6, edgecolor="k", label="Predicted")
-    misclassified = y != y_pred
-    plt.scatter(x1[misclassified], x2[misclassified], facecolors="none", edgecolors="red", label="Misclassified")
+def plot_results(model_name, X_test, y_test, predictions, is_meta):
+    plt.ioff()  # Disable interactive mode for speed
 
-    for i, (x, y_point) in enumerate(zip(x1[misclassified], x2[misclassified])):
-        plt.text(x, y_point, str(y.iloc[i]), color="red", fontsize=8)
+    feature_x, feature_y = "Tot Fwd Pkts", "Tot Bwd Pkts"
+    use_log_scale=True
 
-    plt.title(title)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.legend()
-    plt.grid(True)
-    plt.pause(0.1)  # Briefly pause to display the plot without blocking
+    # Ensure required columns exist in the dataset
+    required_columns = [feature_x, feature_y]
+    if not all(col in data.columns for col in required_columns):
+        print(f"Missing required columns! Found: {data.columns.tolist()}")
+        return
 
-def evaluate_model(model, X_train, X_test, y_test, model_name):
+    # Extract selected features from the dataset
+    plot_data = data.loc[:, required_columns]
+
+    # Get packet indices
+    packet_indices = y_test.index if is_meta else X_test.index
+    merged_data = plot_data.loc[packet_indices]
+
+    # Identify correct and incorrect classifications
+    correct_mask = (predictions == y_test)
+    incorrect_mask = ~correct_mask
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    # Scatter plot with log scaling (if enabled)
+    ax.scatter(merged_data.loc[correct_mask, feature_x], 
+               merged_data.loc[correct_mask, feature_y], 
+               color='blue', s=3, alpha=0.5, label="Correctly Classified")
+
+    ax.scatter(merged_data.loc[incorrect_mask, feature_x], 
+               merged_data.loc[incorrect_mask, feature_y], 
+               color='red', s=3, alpha=0.5, label="Incorrectly Classified")
+
+    # Apply log scale to axes to handle outliers
+    if use_log_scale:
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+
+    # Labels and title
+    ax.set_xlabel(feature_x)
+    ax.set_ylabel(feature_y)
+    ax.set_title(f"{model_name} - Packet Classification ({feature_x} vs. {feature_y})")
+
+    # Add legend
+    ax.legend()
+
+    # Hide unnecessary spines
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    # Save and close plot to avoid memory issues
+    plt.savefig(f"Results/{model_name}_classification.png", dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+def evaluate_model(model, X_train, X_test, y_test, model_name, is_meta=False):
     verbose_log(f"Evaluating model for {model_name}...")
 
     if hasattr(model, "predict_proba"):
@@ -146,7 +184,7 @@ def evaluate_model(model, X_train, X_test, y_test, model_name):
         "Precision": precision_score(y_test, preds, pos_label=1),
         "Recall": recall_score(y_test, preds, pos_label=1),
         "F1 Score": f1_score(y_test, preds, pos_label=1),
-        "Confusion Matrix": cm.tolist()
+        "Confusion Matrix": cm.tolist(),
     }
     sub_model_metrics[model_name] = metrics
 
@@ -158,6 +196,14 @@ def evaluate_model(model, X_train, X_test, y_test, model_name):
     rates = calculate_rates(cm)
     verbose_log(f"{model_name} True Positive Rate (TPR): {rates['TPR']:.4f}")
     verbose_log(f"{model_name} False Positive Rate (FPR): {rates['FPR']:.4f}")
+
+    # Generate and save confusion matrix heatmap
+    plot_confusion_matrix(cm, model_name)
+    verbose_log(f"Confusion matrix saved for {model_name}.")
+
+    # Generate spatial/temporal classification graph
+    plot_results(model_name, X_test, y_test, preds, is_meta)
+    verbose_log(f"Graph saved for {model_name}.")
 
 def train_and_get_predictions(model_name, model, param_grid, X_train, y_train, X_test, y_test):
     param_hash = get_param_hash(param_grid if use_grid_search else normalize_parameters({k: v[0] for k, v in param_grid.items()}))
@@ -174,8 +220,6 @@ def train_and_get_predictions(model_name, model, param_grid, X_train, y_train, X
                     cached_model = pickle.load(f)
                 verbose_log(f"Cached model for {model_name} loaded successfully. Evaluating...")
                 evaluate_model(cached_model, X_train, X_test, y_test, model_name)
-                if display_data: 
-                    visualize_model_classification(model=cached_model, X=X_test, y=y_test, feature_names=X_train.columns.tolist(), use_pca=True, title=f"{model_name} Classification")
                 return
             except FileNotFoundError:
                 verbose_log(f"Cache file for {model_name} not found. Retraining...", level="WARNING")
@@ -202,9 +246,6 @@ def train_and_get_predictions(model_name, model, param_grid, X_train, y_train, X
     verbose_log(f"Evaluating newly trained model for {model_name}...")
     evaluate_model(best_model, X_train, X_test, y_test, model_name)
 
-    if display_data: 
-        visualize_model_classification(model=cached_model, X=X_test, y=y_test, feature_names=X_train.columns.tolist(), use_pca=True, title=f"{model_name} Classification")
-
 # Main Loop
 for model_name, config in model_configs.items():
     X_train, X_test, y_train, y_test = config["data_split"]
@@ -221,25 +262,4 @@ meta_model.fit(meta_X_train, meta_y_train)
 final_test_probs = meta_model.predict_proba(meta_X_test)[:, 1]
 final_predictions = (final_test_probs >= 0.5).astype(int)
 
-accuracy = accuracy_score(meta_y_test, final_predictions)
-precision = precision_score(meta_y_test, final_predictions, pos_label=1)
-recall = recall_score(meta_y_test, final_predictions, pos_label=1)
-f1 = f1_score(meta_y_test, final_predictions, pos_label=1)
-conf_matrix = confusion_matrix(meta_y_test, final_predictions)
-
-final_metrics = {"Accuracy": accuracy, "Precision": precision, "Recall": recall, "F1 Score": f1, "Confusion Matrix": conf_matrix.tolist()}
-verbose_log("Final Metrics for Hierarchical Model with Learning-Based Weights:")
-for key, value in final_metrics.items():
-    verbose_log(f"{key}: {value}", level="RESULT")
-
-# Calculate TPR and TNR
-meta_rates = calculate_rates(conf_matrix)
-verbose_log(f"{model_name} True Positive Rate (TPR): {meta_rates['TPR']:.4f}")
-verbose_log(f"{model_name} False Positive Rate (FPR): {meta_rates['FPR']:.4f}")
-
-if display_data:
-    # Visualize meta-model predictions
-    visualize_model_classification(model=meta_model, X=meta_X_test, y=meta_y_test, feature_names=["Sub-Model 1", "Sub-Model 2", "Sub-Model 3"], use_pca=True, title="Meta-Model Classification")
-
-    plt.ioff()  # Disable interactive mode
-    plt.show()  # Show all plots
+evaluate_model(meta_model, meta_X_train, meta_X_test, meta_y_test, "Meta_Model", is_meta=True)
